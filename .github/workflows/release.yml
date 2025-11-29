@@ -33,6 +33,7 @@ jobs:
         with:
           tag: v${{ steps.package-version.outputs.current-version}}
           name: v${{ steps.package-version.outputs.current-version}}
-          body: [CHANGELOG](https://github.com/MCSManager/MCSManager/releases/tag/v${{ steps.package-version.outputs.current-version}})
+          body: |
+            [CHANGELOG](https://github.com/MCSManager/MCSManager/releases/tag/v${{ steps.package-version.outputs.current-version}})
           artifacts: "mcsmanager.fpk"
           token: ${{ secrets.GITHUB_TOKEN }}
