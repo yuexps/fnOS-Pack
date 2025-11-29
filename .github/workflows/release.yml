@@ -26,7 +26,8 @@ jobs:
       - name: Get current package version
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
-        path: mcsmanager/app/server/web
+        with:
+          path: mcsmanager/app/server/web
 
       - name: Release
         uses: ncipollo/release-action@v1.20.0
