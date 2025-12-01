@@ -20,6 +20,7 @@ ln -s "${SHARE_PATHS[0]}" "${TRIM_APPDEST}/server/daemon/data" >> "${LOG_FILE}" 
 ln -s "${SHARE_PATHS[1]}" "${TRIM_APPDEST}/server/daemon/logs" >> "${LOG_FILE}" 2>&1
 ln -s "${SHARE_PATHS[2]}" "${TRIM_APPDEST}/server/web/data" >> "${LOG_FILE}" 2>&1
 ln -s "${SHARE_PATHS[3]}" "${TRIM_APPDEST}/server/web/logs" >> "${LOG_FILE}" 2>&1
+
 # npm 安装
 cd "${TRIM_APPDEST}/server/daemon" && npm i --production --no-fund --no-audit --registry=https://registry.npmmirror.com >> "${LOG_FILE}" 2>&1
 cd "${TRIM_APPDEST}/server/web" && npm i --production --no-fund --no-audit --registry=https://registry.npmmirror.com >> "${LOG_FILE}" 2>&1
