@@ -18,16 +18,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.0
 
-      - name: Build Package
-        run: |
-          chmod +x ./build/fnpack-1.0.4-linux-amd64
-          ./build/fnpack-1.0.4-linux-amd64 build mcsmanager
-
       - name: Get current package version
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
         with:
           path: mcsmanager/app/server/web
+
+      - name: Update version in manifest file
+        run: |
+          sed -i "s/version=1.0.0/version=${{ steps.package-version.outputs.current-version }}/" mcsmanager/manifest
+
+      - name: Build Package
+        run: |
+          chmod +x ./build/fnpack-1.0.4-linux-amd64
+          ./build/fnpack-1.0.4-linux-amd64 build mcsmanager
 
       - name: Release
         uses: ncipollo/release-action@v1.20.0
