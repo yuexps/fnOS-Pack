@@ -18,89 +18,69 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check for MCSManager Updates
-        id: mcs_check
+      - name: Check and Sync Version
+        id: sync_ver
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 使用 API 获取最新版本信息，并携带认证
+          # 1. 获取最新版本信息
           RELEASE_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/MCSManager/MCSManager/releases/latest)
           
-          # 检查 API 是否正常返回
+          # 检查 API 访问是否受限
           if echo "$RELEASE_JSON" | jq -e '.message' > /dev/null; then
-            echo "错误: GitHub API 返回消息: $(echo "$RELEASE_JSON" | jq -r .message)"
+            echo "错误: GitHub API 访问受限: $(echo "$RELEASE_JSON" | jq -r .message)"
             exit 1
           fi
 
-          LATEST_TAG=$(echo "$RELEASE_JSON" | jq -r .tag_name | sed 's/^v//')
-          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-          
-          # 获取本地版本
-          CURRENT_VER=$(jq -r .version mcsmanager/app/server/web/package.json)
-          echo "current_ver=$CURRENT_VER" >> $GITHUB_OUTPUT
-          
-          if [ "$LATEST_TAG" != "$CURRENT_VER" ]; then
-            echo "检测到新版本: $LATEST_TAG (本地: $CURRENT_VER)"
-            echo "update_needed=true" >> $GITHUB_OUTPUT
+          LATEST_VER=$(echo "$RELEASE_JSON" | jq -r .tag_name | sed 's/^v//')
+          LOCAL_VER=$(jq -r .version mcsmanager/app/server/web/package.json)
+          echo "远程版本: $LATEST_VER, 本地版本: $LOCAL_VER"
+
+          # 2. 如果版本落后则执行更新
+          if [ "$LATEST_VER" != "$LOCAL_VER" ]; then
+            echo "正在从 v$LOCAL_VER 更新到 v$LATEST_VER..."
             DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | contains("linux_release")) | .browser_download_url')
             
             if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
-              echo "错误: 未在大版本 v$LATEST_TAG 中找到 linux_release 资源文件"
+              echo "错误: 未找到 linux_release 资源文件，无法更新"
               exit 1
             fi
-            echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+
+            curl -L -o mcs.tar.gz "$DOWNLOAD_URL"
+            mkdir -p temp && tar -xzf mcs.tar.gz -C temp
+            
+            # 安全地寻找目录并检查
+            D_SRC=$(find temp -type d -name "daemon" | head -1)
+            W_SRC=$(find temp -type d -name "web" | head -1)
+            
+            if [ -z "$D_SRC" ] || [ -z "$W_SRC" ]; then
+              echo "错误: 压缩包内未找到 daemon 或 web 目录"
+              exit 1
+            fi
+
+            # 替换代码
+            rm -rf mcsmanager/app/server/daemon/* mcsmanager/app/server/web/*
+            cp -r "$D_SRC"/* mcsmanager/app/server/daemon/
+            cp -r "$W_SRC"/* mcsmanager/app/server/web/
+            
+            rm -rf temp mcs.tar.gz
+            
+            # Git 提交
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "chore: auto-update to v$LATEST_VER [skip ci]"
+            git push
+            
+            FINAL_VER=$LATEST_VER
           else
-            echo "当前已是最新版本: $CURRENT_VER"
-            echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "当前已是最新版本"
+            FINAL_VER=$LOCAL_VER
           fi
 
-      - name: Perform Update
-        if: steps.mcs_check.outputs.update_needed == 'true'
-        run: |
-          echo "正在从 v${{ steps.mcs_check.outputs.current_ver }} 更新到 v${{ steps.mcs_check.outputs.latest_tag }}..."
-          curl -L -o mcsmanager.tar.gz ${{ steps.mcs_check.outputs.download_url }}
-          mkdir -p temp_update
-          tar -xzf mcsmanager.tar.gz -C temp_update
-          
-          # 寻找 daemon 和 web 所在的实际路径（兼容包含多级目录的情况）
-          DAEMON_SRC=$(find temp_update -type d -name "daemon" | head -n 1)
-          WEB_SRC=$(find temp_update -type d -name "web" | head -n 1)
-          
-          if [ -z "$DAEMON_SRC" ] || [ -z "$WEB_SRC" ]; then
-            echo "错误: 在压缩包中未找到 daemon 或 web 目录"
-            ls -R temp_update
-            exit 1
-          fi
-
-          echo "找到源码目录: $DAEMON_SRC, $WEB_SRC"
-          
-          rm -rf mcsmanager/app/server/daemon/*
-          rm -rf mcsmanager/app/server/web/*
-          
-          cp -r "$DAEMON_SRC"/* mcsmanager/app/server/daemon/
-          cp -r "$WEB_SRC"/* mcsmanager/app/server/web/
-          
-          # 立即更新 manifest 以便后续步骤使用
-          sed -i "s/version=.*/version=${{ steps.mcs_check.outputs.latest_tag }}/" mcsmanager/manifest
-          
-          rm -rf temp_update
-          rm mcsmanager.tar.gz
-          
-          # 提交变更回仓库
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "chore: auto-update MCSManager to v${{ steps.mcs_check.outputs.latest_tag }} [skip ci]"
-          git push
-
-      - name: Get Final Version
-        id: final-version
-        run: |
-          VERSION=$(jq -r .version mcsmanager/app/server/web/package.json)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # 确保 manifest 版本正确 (以防没有触发 Perform Update 步骤)
-          sed -i "s/version=.*/version=$VERSION/" mcsmanager/manifest
+          # 3. 最终同步
+          sed -i "s/version=.*/version=$FINAL_VER/" mcsmanager/manifest
+          echo "FINAL_VER=$FINAL_VER" >> $GITHUB_ENV
 
       - name: Build Package
         run: |
@@ -110,11 +90,11 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1.14.0
         with:
-          tag: v${{ steps.final-version.outputs.version }}
-          name: v${{ steps.final-version.outputs.version }}
+          tag: v${{ env.FINAL_VER }}
+          name: v${{ env.FINAL_VER }}
           allowUpdates: true
           body: |
-            MCSManager 版本: ${{ steps.final-version.outputs.version }}
-            [官方更新日志](https://github.com/MCSManager/MCSManager/releases/tag/v${{ steps.final-version.outputs.version }})
+            MCSManager 版本: ${{ env.FINAL_VER }}
+            [更新日志](https://github.com/MCSManager/MCSManager/releases/tag/v${{ env.FINAL_VER }})
           artifacts: "mcsmanager.fpk"
           token: ${{ secrets.GITHUB_TOKEN }}
