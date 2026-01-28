@@ -62,11 +62,23 @@ jobs:
           mkdir -p temp_update
           tar -xzf mcsmanager.tar.gz -C temp_update
           
+          # 寻找 daemon 和 web 所在的实际路径（兼容包含多级目录的情况）
+          DAEMON_SRC=$(find temp_update -type d -name "daemon" | head -n 1)
+          WEB_SRC=$(find temp_update -type d -name "web" | head -n 1)
+          
+          if [ -z "$DAEMON_SRC" ] || [ -z "$WEB_SRC" ]; then
+            echo "错误: 在压缩包中未找到 daemon 或 web 目录"
+            ls -R temp_update
+            exit 1
+          fi
+
+          echo "找到源码目录: $DAEMON_SRC, $WEB_SRC"
+          
           rm -rf mcsmanager/app/server/daemon/*
           rm -rf mcsmanager/app/server/web/*
           
-          cp -r temp_update/daemon/* mcsmanager/app/server/daemon/
-          cp -r temp_update/panel/* mcsmanager/app/server/web/
+          cp -r "$DAEMON_SRC"/* mcsmanager/app/server/daemon/
+          cp -r "$WEB_SRC"/* mcsmanager/app/server/web/
           
           # 立即更新 manifest 以便后续步骤使用
           sed -i "s/version=.*/version=${{ steps.mcs_check.outputs.latest_tag }}/" mcsmanager/manifest
