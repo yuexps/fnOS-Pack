@@ -73,9 +73,11 @@ jobs:
             git push
             
             FINAL_VER=$LATEST_VER
+            echo "update_needed=true" >> $GITHUB_OUTPUT
           else
             echo "当前已是最新版本"
             FINAL_VER=$LOCAL_VER
+            echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
 
           # 3. 最终同步
@@ -83,11 +85,13 @@ jobs:
           echo "FINAL_VER=$FINAL_VER" >> $GITHUB_ENV
 
       - name: Build Package
+        if: steps.sync_ver.outputs.update_needed == 'true'
         run: |
           chmod +x ./build/fnpack-1.0.4-linux-amd64
           ./build/fnpack-1.0.4-linux-amd64 build mcsmanager
 
       - name: Create Release
+        if: steps.sync_ver.outputs.update_needed == 'true'
         uses: ncipollo/release-action@v1.14.0
         with:
           tag: v${{ env.FINAL_VER }}
