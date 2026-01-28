@@ -1,11 +1,11 @@
-name: Build
+name: Build and Release
 
 on:
   workflow_dispatch:
   push:
     branches: [ master ]
-  pull_request:
-    branches: [ master ]
+  schedule:
+    - cron: '0 0 * * *' # 每天凌晨运行
 
 jobs:
   build-and-release:
@@ -16,29 +16,76 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.0
+        uses: actions/checkout@v4
 
-      - name: Get current package version
-        id: package-version
-        uses: martinbeentjes/npm-get-version-action@v1.3.1
-        with:
-          path: mcsmanager/app/server/web
-
-      - name: Update version in manifest file
+      - name: Check for MCSManager Updates
+        id: mcs_check
         run: |
-          sed -i "s/version=1.0.1/version=${{ steps.package-version.outputs.current-version }}/" mcsmanager/manifest
+          # 获取远程最新版本
+          LATEST_TAG=$(curl -s https://api.github.com/repos/MCSManager/MCSManager/releases/latest | jq -r .tag_name | sed 's/^v//')
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          
+          # 获取本地版本
+          CURRENT_VER=$(jq -r .version mcsmanager/app/server/web/package.json)
+          echo "current_ver=$CURRENT_VER" >> $GITHUB_OUTPUT
+          
+          if [ "$LATEST_TAG" != "$CURRENT_VER" ]; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            DOWNLOAD_URL=$(curl -s https://api.github.com/repos/MCSManager/MCSManager/releases/latest | jq -r '.assets[] | select(.name | contains("linux_release")) | .browser_download_url')
+            echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Perform Update
+        if: steps.mcs_check.outputs.update_needed == 'true'
+        run: |
+          echo "正在从 v${{ steps.mcs_check.outputs.current_ver }} 更新到 v${{ steps.mcs_check.outputs.latest_tag }}..."
+          curl -L -o mcsmanager.tar.gz ${{ steps.mcs_check.outputs.download_url }}
+          mkdir -p temp_update
+          tar -xzf mcsmanager.tar.gz -C temp_update
+          
+          rm -rf mcsmanager/app/server/daemon/*
+          rm -rf mcsmanager/app/server/web/*
+          
+          cp -r temp_update/daemon/* mcsmanager/app/server/daemon/
+          cp -r temp_update/panel/* mcsmanager/app/server/web/
+          
+          # 立即更新 manifest 以便后续步骤使用
+          sed -i "s/version=.*/version=${{ steps.mcs_check.outputs.latest_tag }}/" mcsmanager/manifest
+          
+          rm -rf temp_update
+          rm mcsmanager.tar.gz
+          
+          # 提交变更回仓库
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: auto-update MCSManager to v${{ steps.mcs_check.outputs.latest_tag }} [skip ci]"
+          git push
+
+      - name: Get Final Version
+        id: final-version
+        run: |
+          VERSION=$(jq -r .version mcsmanager/app/server/web/package.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # 确保 manifest 版本正确 (以防没有触发 Perform Update 步骤)
+          sed -i "s/version=.*/version=$VERSION/" mcsmanager/manifest
 
       - name: Build Package
         run: |
           chmod +x ./build/fnpack-1.0.4-linux-amd64
           ./build/fnpack-1.0.4-linux-amd64 build mcsmanager
 
-      - name: Release
-        uses: ncipollo/release-action@v1.20.0
+      - name: Create Release
+        uses: ncipollo/release-action@v1.14.0
         with:
-          tag: v${{ steps.package-version.outputs.current-version}}
-          name: v${{ steps.package-version.outputs.current-version}}
+          tag: v${{ steps.final-version.outputs.version }}
+          name: v${{ steps.final-version.outputs.version }}
+          allowUpdates: true
           body: |
-            [CHANGELOG](https://github.com/MCSManager/MCSManager/releases/tag/v${{ steps.package-version.outputs.current-version}})
+            MCSManager 版本: ${{ steps.final-version.outputs.version }}
+            [官方更新日志](https://github.com/MCSManager/MCSManager/releases/tag/v${{ steps.final-version.outputs.version }})
           artifacts: "mcsmanager.fpk"
           token: ${{ secrets.GITHUB_TOKEN }}
