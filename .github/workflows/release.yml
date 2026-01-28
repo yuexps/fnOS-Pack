@@ -20,9 +20,19 @@ jobs:
 
       - name: Check for MCSManager Updates
         id: mcs_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 获取远程最新版本
-          LATEST_TAG=$(curl -s https://api.github.com/repos/MCSManager/MCSManager/releases/latest | jq -r .tag_name | sed 's/^v//')
+          # 使用 API 获取最新版本信息，并携带认证
+          RELEASE_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/MCSManager/MCSManager/releases/latest)
+          
+          # 检查 API 是否正常返回
+          if echo "$RELEASE_JSON" | jq -e '.message' > /dev/null; then
+            echo "错误: GitHub API 返回消息: $(echo "$RELEASE_JSON" | jq -r .message)"
+            exit 1
+          fi
+
+          LATEST_TAG=$(echo "$RELEASE_JSON" | jq -r .tag_name | sed 's/^v//')
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           
           # 获取本地版本
@@ -30,10 +40,17 @@ jobs:
           echo "current_ver=$CURRENT_VER" >> $GITHUB_OUTPUT
           
           if [ "$LATEST_TAG" != "$CURRENT_VER" ]; then
+            echo "检测到新版本: $LATEST_TAG (本地: $CURRENT_VER)"
             echo "update_needed=true" >> $GITHUB_OUTPUT
-            DOWNLOAD_URL=$(curl -s https://api.github.com/repos/MCSManager/MCSManager/releases/latest | jq -r '.assets[] | select(.name | contains("linux_release")) | .browser_download_url')
+            DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | contains("linux_release")) | .browser_download_url')
+            
+            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
+              echo "错误: 未在大版本 v$LATEST_TAG 中找到 linux_release 资源文件"
+              exit 1
+            fi
             echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
           else
+            echo "当前已是最新版本: $CURRENT_VER"
             echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
 
